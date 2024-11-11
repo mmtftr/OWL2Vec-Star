@@ -1,0 +1,20 @@
+[project]
+authors = ["Mehmet Efe Akça <efeakca@gmail.com>"]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "owl2vec_star"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = "==3.9"
+jupyter = "==1.0.0"
+rdflib = ">=4.2.2"
+pyparsing = "==2.4.7"
+gensim = ">=3.8.0"
+scikit-learn = "~=0.24.2"
+nltk = "~=3.5"
+owlready2 = ">=0.25"
+pandas = ">=2.2.3,<3"
