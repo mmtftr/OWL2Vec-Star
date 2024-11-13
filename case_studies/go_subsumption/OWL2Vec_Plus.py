@@ -77,16 +77,18 @@ def embed(model, instances):
 
     feature_vectors = []
     for instance in instances:
-        if FLAGS.Embed_Out_Words.lower() == 'yes' and FLAGS.Embed_Out_URI.lower() == 'yes':
+        embed_flags = (FLAGS.Embed_Out_Words.lower(), FLAGS.Embed_Out_URI.lower())
+
+        if embed_flags == ('yes', 'yes'):
             v_uri = model.wv.get_vector(instance) if instance in model.wv.index_to_key else np.zeros(model.vector_size)
             v_word = word_embeding(inst=instance)
             feature_vectors.append(np.concatenate((v_uri, v_word)))
 
-        elif FLAGS.Embed_Out_Words.lower() == 'no' and FLAGS.Embed_Out_URI.lower() == 'yes':
+        elif embed_flags == ('no', 'yes'):
             v_uri = model.wv.get_vector(instance) if instance in model.wv.index_to_key else np.zeros(model.vector_size)
             feature_vectors.append(v_uri)
 
-        elif FLAGS.Embed_Out_Words.lower() == 'yes' and FLAGS.Embed_Out_URI.lower() == 'no':
+        elif embed_flags == ('yes', 'no'):
             v_word = word_embeding(inst=instance)
             feature_vectors.append(v_word)
 

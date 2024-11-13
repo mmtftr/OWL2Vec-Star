@@ -1,0 +1,11 @@
+# Project settings
+project_name: "go-embedding-evaluation"
+base_ontology: "go-full"
+
+input_type: "concatenate"  # or "minus"
+random_seed: 42
+
+# Training parameters
+batch_size: 32
+learning_rate: 0.001
+num_epochs: 100

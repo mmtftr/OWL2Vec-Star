@@ -41,9 +41,9 @@ def extract_owl2vec_model(ontology_file, config_file, uri_doc, lit_doc, mix_doc)
     if not os.path.exists(config['DOCUMENT']['cache_dir']):
         os.mkdir(config['DOCUMENT']['cache_dir'])
 
-        
+
     model_ = __perform_ontology_embedding(config)
-        
+
 
     return model_
 
@@ -57,14 +57,14 @@ def __perform_ontology_embedding(config):
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
     start_time = time.time()
-    
+
     if ('ontology_projection' in config['DOCUMENT'] and config['DOCUMENT']['ontology_projection'] == 'yes') or \
         'pre_entity_file' not in config['DOCUMENT'] or 'pre_axiom_file' not in config['DOCUMENT'] or \
         'pre_annotation_file' not in config['DOCUMENT']:
         logging.info('Access the ontology ...')
 
         tax_only = (config['DOCUMENT']['projection_only_taxonomy'] == "yes")
-        
+
         projection = OntologyProjection(config['BASIC']['ontology_file'], reasoner=Reasoner.STRUCTURAL,
                                         only_taxonomy=tax_only,
                                         bidirectional_taxonomy=True, include_literals=True, avoid_properties=set(),
@@ -141,7 +141,7 @@ def __perform_ontology_embedding(config):
                     #print(pre_process_words(words=label.split()))
                     #print(uri_to_labels[e])
                     uri_to_labels[e].add(tuple(pre_process_words(words=label.split())))
-		
+
                 if e in projection.entityToSynonyms and len(projection.entityToSynonyms[e]) > 0:
                     for label in projection.getSynonymLabelsForEntity(e):
                         #print("Syn: " + label)
@@ -149,7 +149,7 @@ def __perform_ontology_embedding(config):
                             uri_to_labels[e]=set()
                         #We add a list of words in the set
                         uri_to_labels[e].add(tuple(pre_process_words(words=label.split())))
-                    
+
         for e in entities:
             if e in projection.entityToAllLexicalLabels:
                 for v in projection.entityToAllLexicalLabels[e]:
@@ -308,6 +308,7 @@ def __perform_ontology_embedding(config):
             f.close()
 
 
+    return
     # learn the language model (train a new model or fine tune the pre-trained model)
     start_time = time.time()
     if 'pre_train_model' not in config['MODEL'] or not os.path.exists(config['MODEL']['pre_train_model']):
@@ -325,19 +326,19 @@ def __perform_ontology_embedding(config):
             model_.min_count = int(config['MODEL']['min_count'])
             model_.build_vocab(all_doc, update=True)
             model_.train(all_doc, total_examples=model_.corpus_count, epochs=int(config['MODEL']['epoch']))
-	
+
     logging.info('Time for learning the language model: %s seconds' % (time.time() - start_time))
 
     return model_
-    
-    
-    
-    
+
+
+
+
 '''
 Joint embeddings with multiple input ontologies
 '''
 def __perform_joint_ontology_embedding(config):
-    
+
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
     start_time = time.time()

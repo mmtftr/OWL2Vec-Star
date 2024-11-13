@@ -11,7 +11,7 @@ import java.io.*;
 import java.util.*;
 
 public class SubClass_NormalSplit {
-    public static String onto_file = "data/go.owl";
+    public static String onto_file = "go.owl";
     public static String train_onto_file = "go.train.owl";
     public static String train_file = "train.csv";
     public static String valid_file = "valid.csv";

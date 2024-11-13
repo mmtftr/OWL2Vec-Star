@@ -1,0 +1,3 @@
+[submodule "case_studies/java/ontology-services-toolkit"]
+	path = case_studies/java/ontology-services-toolkit
+	url = git@gitlab.com:ernesto.jimenez.ruiz/ontology-services-toolkit.git

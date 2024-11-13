@@ -11,9 +11,9 @@ import java.io.*;
 import java.util.*;
 
 public class ClassAssertion_NormalSplit {
-    public static String onto_file = "data/helis_v1.00.origin.owl";
-    public static String train_onto_file = "helis_normal_split/helis_v1.00.train.owl";
-    public static String train_file = "helis_normal_split/train.csv";
+    public static String onto_file = "go.owl";
+    public static String train_onto_file = "go.train.owl";
+    public static String train_file = "train.csv";
     public static String valid_file = "valid.csv";
     public static String test_file = "test.csv";
     public static String class_file = "classes.txt";
@@ -23,7 +23,7 @@ public class ClassAssertion_NormalSplit {
     /**
      * Those declared (none-inferred) membership axioms are split into train (70%), valid (10%) and test (20%)
      * A training ontology is created for learning the embedding, by removing valid and test membership axioms
-     * One negative sample is generated for each positive axiom in the training set 
+     * One negative sample is generated for each positive axiom in the training set
      * @param args
      */
     public static void main(String[] args) throws OWLOntologyCreationException, IOException, OWLOntologyStorageException {

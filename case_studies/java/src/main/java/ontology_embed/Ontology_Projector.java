@@ -11,11 +11,9 @@ import uio.ifi.ontology.toolkit.projection.controller.triplestore.RDFoxSessionMa
 
 public class Ontology_Projector {
 
-    private static String filePath = "file:/dir/go.train.owl";
-    private static String outFile = "go.train.projection.ttl"; //only a relative path can be used here; no absolute path
-    // use .ttl or manually transform it from .owl to ttl if it is input into OWL2Vec_Plus.py
-
-    public static void main(String [] args) throws Exception {
+    public static void main(String[] args) throws Exception {
+        String filePath = args.length > 0 ? args[0] : "file:/../../cache/go.owl";
+        String outFile = args.length > 1 ? args[1] : "go.train.projection.ttl";
         RDFoxSessionManager man = new RDFoxSessionManager();
         man.createNewSessionForEmbeddings(filePath);
 
