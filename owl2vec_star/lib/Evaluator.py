@@ -49,7 +49,7 @@ class Evaluator:
     """
 
     def run_mlp(self):
-        mlp = MLPClassifier(max_iter=1000, hidden_layer_sizes=200, verbose=1, n_jobs=-1)
+        mlp = MLPClassifier(max_iter=1000, hidden_layer_sizes=200, verbose=1)
         mlp.fit(self.train_X, self.train_y)
         mlp_best = mlp
         MRR, hits1, hits5, hits10 = self.evaluate(model=mlp_best, eva_samples=self.test_samples)
@@ -84,14 +84,14 @@ class Evaluator:
         print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' % (MRR, hits1, hits5, hits10))
 
     def run_svm(self):
-        m = svm.SVC(probability=True, verbose=1, n_jobs=-1)
+        m = svm.SVC(probability=True, verbose=1)
         m.fit(self.train_X, self.train_y)
         m_best = m
         MRR, hits1, hits5, hits10 = self.evaluate(model=m_best, eva_samples=self.test_samples)
         print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' % (MRR, hits1, hits5, hits10))
 
     def run_linear_svc(self):
-        lin_clf = svm.LinearSVC(verbose=1, n_jobs=-1)
+        lin_clf = svm.LinearSVC(verbose=1)
         m = CalibratedClassifierCV(lin_clf)
         m.fit(self.train_X, self.train_y)
         m_best = m
@@ -99,7 +99,7 @@ class Evaluator:
         print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' % (MRR, hits1, hits5, hits10))
 
     def run_decision_tree(self):
-        dt = DecisionTreeClassifier(random_state=0, verbose=1, n_jobs=-1)
+        dt = DecisionTreeClassifier(random_state=0, verbose=1)
         dt.fit(self.train_X, self.train_y)
         m_best = dt
         MRR, hits1, hits5, hits10 = self.evaluate(model=m_best, eva_samples=self.test_samples)

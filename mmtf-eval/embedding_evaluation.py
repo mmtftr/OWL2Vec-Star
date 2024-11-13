@@ -143,79 +143,94 @@ class EmbeddingEvaluator(Evaluator):
         self.train_y = train_y
 
     def evaluate(self, model, eva_samples: pd.DataFrame) -> Tuple[float, float, float, float]:
-        """
-        Evaluate model performance using MRR and Hits@k metrics.
+        """Evaluate model performance using MRR and Hits@k metrics."""
+        model.verbose = False
+        batch_size = 128  # Adjust based on your memory constraints
 
-        Args:
-            model: Trained sklearn model
-            eva_samples: DataFrame containing evaluation pairs
-
-        Returns:
-            Tuple of (MRR, Hits@1, Hits@5, Hits@10)
-        """
-        model.verbose = False # disable logging
-        MRR_sum = hits1_sum = hits5_sum = hits10_sum = 0
-
-        embedding_dim = next(iter(self.dataset.embeddings[self.embedding_type].values())).shape[0]
-
-        all_classes = list(self.dataset.embeddings[self.embedding_type].keys())
+        # Pre-compute all_classes and embeddings once
+        all_classes = np.array(list(self.dataset.embeddings[self.embedding_type].keys()))
         all_class_v = np.array([self.dataset.embeddings[self.embedding_type][c] for c in all_classes])
-        for idx, sample in tqdm(eva_samples.iterrows(), desc="Evaluating", total=len(eva_samples)):
-            sub, gt = sample[0], sample[1]
-            sub_id = sub.split('/')[-1]
-            gt_id = gt.split('/')[-1]
-            sub_v = self.dataset.embeddings[self.embedding_type][sub_id] if sub_id in self.dataset.embeddings[self.embedding_type] else np.zeros(embedding_dim)
+        embedding_dim = all_class_v.shape[1]
 
-            # Prepare predictions for all possible pairs
+        metrics = np.zeros(4)  # [MRR, hits@1, hits@5, hits@10]
+        n_samples = len(eva_samples)
+
+        # Process in batches
+        for batch_start in tqdm(range(0, n_samples, batch_size), desc="Evaluating"):
+            batch_end = min(batch_start + batch_size, n_samples)
+            batch_samples = eva_samples.iloc[batch_start:batch_end]
+
+            # Prepare batch inputs
+            batch_subs = [s.split('/')[-1] for s in batch_samples[0]]
+            batch_gts = [g.split('/')[-1] for g in batch_samples[1]]
+
+            # Get embeddings for batch subjects
+            batch_sub_v = np.array([
+                self.dataset.embeddings[self.embedding_type].get(sub_id, np.zeros(embedding_dim))
+                for sub_id in batch_subs
+            ])
+
+            # Prepare predictions for all pairs in batch
             if self.config.input_type == 'concatenate':
-                X = np.concatenate((
-                    np.array([sub_v] * len(all_classes)),
-                    all_class_v
-                ), axis=1)
+                # Shape: (batch_size, n_classes, embedding_dim * 2)
+                X = np.concatenate([
+                    np.repeat(batch_sub_v[:, None, :], len(all_classes), axis=1),
+                    np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0)
+                ], axis=2)
             else:
-                X = np.array([sub_v] * len(all_classes)) - \
-                    all_class_v
+                # Shape: (batch_size, n_classes, embedding_dim)
+                X = np.repeat(batch_sub_v[:, None, :], len(all_classes), axis=1) - \
+                    np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0)
 
-            # Get probability predictions
-            P = model.predict_proba(X)[:, 1]
-            sorted_indexes = np.argsort(P)[::-1]
-            sorted_classes = [all_classes[j] for j in sorted_indexes
-                            if all_classes[j] not in self.inferred_ancestors.get(sub, [])]
-            # Calculate metrics
-            rank = sorted_classes.index(gt_id) + 1
-            MRR_sum += 1.0 / rank
-            hits1_sum += 1 if gt_id in sorted_classes[:1] else 0
-            hits5_sum += 1 if gt_id in sorted_classes[:5] else 0
-            hits10_sum += 1 if gt_id in sorted_classes[:10] else 0
+            # Reshape for prediction
+            X_flat = X.reshape(-1, X.shape[-1])
+            P = model.predict_proba(X_flat)[:, 1].reshape(len(batch_sub_v), -1)
 
-            # Log progress   periodically
-            if (idx + 1) % 100 == 0:
-                n = idx + 1
+            # Calculate rankings and metrics for batch
+            for idx, (sub_id, gt_id, probs) in enumerate(zip(batch_subs, batch_gts, P)):
+                # Filter out inferred ancestors
+                mask = np.ones(len(all_classes), dtype=bool)
+                if sub_id in self.inferred_ancestors:
+                    mask[np.isin(all_classes, self.inferred_ancestors[sub_id])] = False
+
+                # Get sorted indices of valid predictions
+                valid_probs = probs[mask]
+                valid_classes = all_classes[mask]
+                sorted_indices = np.argsort(valid_probs)[::-1]
+
+                # Find rank of ground truth
+                gt_rank = np.where(valid_classes[sorted_indices] == gt_id)[0][0] + 1
+
+                # Update metrics
+                metrics[0] += 1.0 / gt_rank  # MRR
+                metrics[1] += gt_id == valid_classes[sorted_indices[0]]  # hits@1
+                metrics[2] += gt_id in valid_classes[sorted_indices[:5]]  # hits@5
+                metrics[3] += gt_id in valid_classes[sorted_indices[:10]]  # hits@10
+
+            # Log progress periodically
+            if (batch_start + batch_size) % 1000 == 0:
+                n = batch_start + batch_size
                 logger.info(
                     f'Evaluated {n} samples - '
-                    f'MRR: {MRR_sum/n:.3f}, '
-                    f'Hits@1: {hits1_sum/n:.3f}, '
-                    f'Hits@5: {hits5_sum/n:.3f}, '
-                    f'Hits@10: {hits10_sum/n:.3f}'
+                    f'MRR: {metrics[0]/n:.3f}, '
+                    f'Hits@1: {metrics[1]/n:.3f}, '
+                    f'Hits@5: {metrics[2]/n:.3f}, '
+                    f'Hits@10: {metrics[3]/n:.3f}'
                 )
 
-        n_samples = len(eva_samples)
-        metrics = (
-            MRR_sum / n_samples,
-            hits1_sum / n_samples,
-            hits5_sum / n_samples,
-            hits10_sum / n_samples
-        )
+        # Compute final metrics
+        metrics /= n_samples
 
+        model_name = model.__class__.__name__
         # Log to wandb
         wandb.log({
-            f"{self.embedding_type}/MRR": metrics[0],
-            f"{self.embedding_type}/Hits@1": metrics[1],
-            f"{self.embedding_type}/Hits@5": metrics[2],
-            f"{self.embedding_type}/Hits@10": metrics[3]
+            f"{self.embedding_type}/{model_name}/MRR": metrics[0],
+            f"{self.embedding_type}/{model_name}/Hits@1": metrics[1],
+            f"{self.embedding_type}/{model_name}/Hits@5": metrics[2],
+            f"{self.embedding_type}/{model_name}/Hits@10": metrics[3]
         })
 
-        return metrics
+        return tuple(metrics)
 
 def main():
     """Main execution function."""
@@ -257,15 +272,15 @@ def main():
         # Prepare data
         evaluator.prepare_data(train_data)
 
-        # Run different models
-        logger.info("\nRandom Forest:")
-        evaluator.run_random_forest()
+        # # Run different models
+        # logger.info("\nRandom Forest:")
+        # evaluator.run_random_forest()
 
         logger.info("\nMLP:")
-        evaluator.run_mlp()
+        # evaluator.run_mlp()
 
         logger.info("\nLogistic Regression:")
-        evaluator.run_logistic_regression()
+        #evaluator.run_logistic_regression()
 
         logger.info("\nSVM:")
         evaluator.run_svm()
