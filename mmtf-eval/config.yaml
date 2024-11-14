@@ -1,10 +1,16 @@
 # Project settings
 project_name: "go-embedding-evaluation"
 base_ontology: "go-basic"
+embedding_types:
+  - owl2vec
+models:
+  - mlp
+# - torch-mlp
+# - rf
 
 input_type: "concatenate"  # or "minus"
 random_seed: 42
-enhanced: false
+
 
 # Training parameters
 batch_size: 128

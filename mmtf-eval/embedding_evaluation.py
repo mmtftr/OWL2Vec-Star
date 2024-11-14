@@ -6,7 +6,7 @@ using various metrics and visualization techniques. Results are logged to Weight
 for experiment tracking.
 """
 
-from re import sub
+from re import I, sub
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -20,7 +20,7 @@ import torch
 import gc
 from torch import nn
 import torch.nn.functional as F
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import yaml
 import sys
 sys.path.append('..')
@@ -77,6 +77,8 @@ class EvalConfig:
     num_epochs: int = 100
     test_size: float = 0.2
     random_seed: int = 42
+    embedding_types: List[str] = field(default_factory=lambda: ["owl2vec"])
+    models: List[Literal["mlp", "rf", "lr", "svm", "dt", "sgd"]] = field(default_factory=lambda: ["mlp"])
     enhanced: bool = False
     input_type: Literal["concatenate", "minus"] = "concatenate"
     device: str = "mps" if torch.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
@@ -95,34 +97,24 @@ class EmbeddingDataset:
         self.config = config
         self.embeddings: Dict[str, Dict[str, np.ndarray]] = {}
 
-    def load_anc2vec(self, file_path: Path) -> None:
-        """Load Anc2Vec embeddings from .npy file."""
-        logger.info(f"Loading Anc2Vec embeddings from {file_path}")
-        self.embeddings['anc2vec'] = np.load(file_path, allow_pickle=True).item()
+    def load_embedding(self, file_path: Path) -> None:
+        """
+        Load embeddings from .npy file.
 
-        # key format is different from the other embeddings
-        self.embeddings['anc2vec'] = {k.replace(":", "_"): v for k, v in self.embeddings['anc2vec'].items()}
+        Can load gt2vec, owl2vec, anc2vec, and biobert embeddings. Make sure embeddings are post-processed if there is a `name-post.ipynb` file.
 
+        Expected embeddings file format (saved using np.save):
+        ```py
+        {
+            "GO_0000001": np.ndarray([0.1, 0.2, ..., 0.3]),
+            ...
+        }
+        ```
+        """
+        logger.info(f"Loading embeddings from {file_path}")
+        self.embeddings[file_path.parent.name] = {k.replace(":", "_"): v for k, v in np.load(file_path, allow_pickle=True).item().items()}
 
-        logger.info(f"Loaded {len(self.embeddings['anc2vec'])} Anc2Vec embeddings")
-
-    def load_owl2vec(self, file_path: Path) -> None:
-        """Load OWL2Vec embeddings."""
-        logger.info(f"Loading OWL2Vec embeddings from {file_path}")
-        self.embeddings['owl2vec'] = np.load(file_path, allow_pickle=True).item()
-        logger.info(f"Loaded {len(self.embeddings['owl2vec'])} OWL2Vec embeddings")
-
-    def load_biobert(self, file_path: Path) -> None:
-        """Load BioBERT embeddings."""
-        logger.info(f"Loading BioBERT embeddings from {file_path}")
-        self.embeddings['biobert'] = np.load(file_path, allow_pickle=True).item()
-        logger.info(f"Loaded {len(self.embeddings['biobert'])} BioBERT embeddings")
-
-    def load_gt2vec(self, file_path: Path) -> None:
-        """Load GT2Vec embeddings."""
-        logger.info(f"Loading GT2Vec embeddings from {file_path}")
-        self.embeddings['gt2vec'] = np.load(file_path, allow_pickle=True).item()
-        logger.info(f"Loaded {len(self.embeddings['gt2vec'])} GT2Vec embeddings")
+        logger.info(f"Loaded {len(self.embeddings[file_path.parent.name])} {file_path.parent.name} embeddings")
 
 
 
@@ -185,7 +177,7 @@ class EmbeddingEvaluator(Evaluator):
     def evaluate(self, model, eva_samples: pd.DataFrame) -> Tuple[float, float, float, float]:
         """Evaluate model performance using MRR and Hits@k metrics."""
         model.verbose = False
-        batch_size = 32  # Adjust based on your memory constraints
+        batch_size = 32
 
         # Pre-compute all_classes and embeddings once
         all_classes = np.array(list(self.dataset.embeddings[self.embedding_type].keys()))
@@ -262,12 +254,14 @@ class EmbeddingEvaluator(Evaluator):
         metrics /= n_samples
 
         model_name = model.__class__.__name__
+        prefix = f"{self.config.base_ontology}/{self.embedding_type}/{model_name}"
+
         # Log to wandb
         wandb.log({
-            f"{self.embedding_type}/{model_name}/MRR": metrics[0],
-            f"{self.embedding_type}/{model_name}/Hits@1": metrics[1],
-            f"{self.embedding_type}/{model_name}/Hits@5": metrics[2],
-            f"{self.embedding_type}/{model_name}/Hits@10": metrics[3]
+            f"{prefix}/MRR": metrics[0],
+            f"{prefix}/Hits@1": metrics[1],
+            f"{prefix}/Hits@5": metrics[2],
+            f"{prefix}/Hits@10": metrics[3]
         })
 
         return tuple(metrics)
@@ -385,11 +379,6 @@ class EmbeddingEvaluator(Evaluator):
         print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' %
             (MRR, hits1, hits5, hits10))
 
-    def run_mlp(self):
-        if self.config.enhanced:
-            self.run_torch_mlp()
-        else:
-            super().run_mlp()
 
 def main():
     """Main execution function."""
@@ -409,11 +398,8 @@ def main():
 
     # Load embeddings
     # evaluates whichever ones are loaded
-    # evaluator.dataset.load_anc2vec(base_path / "anc2vec" / "ontology.embeddings.npy")
-    # evaluator.dataset.load_owl2vec(base_path / "owl2vec" / "ontology.embeddings.npy")
-    # if (base_path / "gt2vec" / "ontology.embeddings.npy").exists():
-    #     evaluator.dataset.load_gt2vec(base_path / "gt2vec" / "ontology.embeddings.npy")
-    evaluator.dataset.load_biobert(base_path / "biobert" / "ontology.embeddings.npy")
+    for embedding_type in config.embedding_types:
+        evaluator.dataset.load_embedding(base_path / embedding_type / "ontology.embeddings.npy")
 
     # Validate data structure
     logger.info(f"Train data shape: {train_data.shape}")
@@ -433,28 +419,35 @@ def main():
         # Prepare data
         evaluator.prepare_data(train_data)
 
-        # # Run different models
-        # logger.info("\nRandom Forest:")
-        # takes too long to eval
-        # evaluator.run_random_forest()
+        # Run different models
+        if "rf" in config.models:
+            logger.info("\nRandom Forest:")
+            evaluator.run_random_forest()
 
-        logger.info("\nMLP:")
-        evaluator.run_mlp()
-        # logger.info("\nLogistic Regression:")
-        # evaluator.run_logistic_regression()
+        if "mlp" in config.models:
+            logger.info("\nMLP:")
+            evaluator.run_mlp()
 
-        # logger.info("\nSVM:")
-        # takes too long to train
-        # evaluator.run_svm()
+        if "torch-mlp" in config.models:
+            logger.info("\nTorch MLP:")
+            evaluator.run_torch_mlp()
 
-        # logger.info("\nLinear SVC:")
-        # evaluator.run_linear_svc()
+        if "lr" in config.models:
+            logger.info("\nLogistic Regression:")
+            evaluator.run_logistic_regression()
 
-        # logger.info("\nDecision Tree:")
-        # evaluator.run_decision_tree()
+        if "svm" in config.models:
+            logger.info("\nSVM:")
+            evaluator.run_svm()
 
-        # logger.info("\nSGD Logistic:")
-        # evaluator.run_sgd_log()
+        if "dt" in config.models:
+            logger.info("\nDecision Tree:")
+            evaluator.run_decision_tree()
+
+        if "sgd" in config.models:
+            logger.info("\nSGD Logistic:")
+            evaluator.run_sgd_log()
+
         gc.collect()
 
     # Close wandb run

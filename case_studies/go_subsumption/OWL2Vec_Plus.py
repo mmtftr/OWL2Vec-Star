@@ -292,8 +292,8 @@ class InclusionEvaluator(Evaluator):
 
 print("\n		2.Train and test ... \n")
 evaluator = InclusionEvaluator(valid_samples, test_samples, train_X, train_y)
-evaluator.run_random_forest()
-# evaluator.run_mlp()
+#evaluator.run_random_forest()
+evaluator.run_mlp()
 # evaluator.run_logistic_regression()
 # evaluator.run_svm()
 # evaluator.run_mlp()
