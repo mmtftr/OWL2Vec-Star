@@ -27,6 +27,7 @@ tqdm = ">=4.67.0,<5"
 pyyaml = ">=6.0.2,<7"
 wandb = ">=0.18.5,<0.19"
 rich = ">=13.9.4,<14"
+seaborn = ">=0.13.2,<0.14"
 
 [pypi-dependencies]
 sentence-transformers = ">=3.3.0, <4"

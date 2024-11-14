@@ -1,0 +1,7 @@
+base_ontology,embedding_type,model,Hits@1,Hits@10,Hits@5,MRR,epoch,learning_rate,train_loss,val_loss
+go-basic,anc2vec,torch_mlp,,,,,3.333,0.001,0.087,0.094
+go-basic,biobert,torch_mlp,,,,,34.0,0.0,0.025,0.085
+go-basic,owl2vec,MLPClassifier,0.043,0.303,0.184,0.125,,,,
+go-full,anc2vec,DecisionTreeClassifier,0.0,0.001,0.0,0.001,,,,
+go-full,biobert,MLPClassifier,0.016,0.155,0.077,0.066,,,,
+go-full,owl2vec,MLPClassifier,0.042,0.301,0.183,0.123,,,,

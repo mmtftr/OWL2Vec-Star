@@ -17,6 +17,7 @@ from sklearn.model_selection import train_test_split
 from tqdm.rich import tqdm
 import logging
 import torch
+import gc
 from torch import nn
 import torch.nn.functional as F
 from dataclasses import dataclass
@@ -26,6 +27,36 @@ sys.path.append('..')
 from owl2vec_star.lib.Evaluator import Evaluator
 from rich.traceback import install
 install(show_locals=True)
+import warnings
+from tqdm import TqdmExperimentalWarning
+
+warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
+
+class TorchMLP(nn.Module):
+    def __init__(self, input_dim: int, hidden_dims: List[int] = [200, 100], dropout: float = 0.2):
+        super().__init__()
+
+        layers = []
+        prev_dim = input_dim
+
+        # Build hidden layers
+        for hidden_dim in hidden_dims:
+            layers.extend([
+                nn.Linear(prev_dim, hidden_dim),
+                nn.ReLU(),
+                nn.BatchNorm1d(hidden_dim),
+                nn.Dropout(dropout)
+            ])
+            prev_dim = hidden_dim
+
+        # Output layer
+        layers.append(nn.Linear(prev_dim, 1))
+        layers.append(nn.Sigmoid())
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.model(x)
 
 from rich.logging import RichHandler
 
@@ -41,11 +72,12 @@ class EvalConfig:
     """Configuration for the evaluation pipeline."""
     project_name: str = "go-embedding-evaluation"
     base_ontology: Literal["go-basic", "go-full"] = "go-full"
-    batch_size: int = 32
+    batch_size: int = 128
     learning_rate: float = 0.001
     num_epochs: int = 100
     test_size: float = 0.2
     random_seed: int = 42
+    enhanced: bool = False
     input_type: Literal["concatenate", "minus"] = "concatenate"
     device: str = "mps" if torch.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -85,6 +117,14 @@ class EmbeddingDataset:
         logger.info(f"Loading BioBERT embeddings from {file_path}")
         self.embeddings['biobert'] = np.load(file_path, allow_pickle=True).item()
         logger.info(f"Loaded {len(self.embeddings['biobert'])} BioBERT embeddings")
+
+    def load_gt2vec(self, file_path: Path) -> None:
+        """Load GT2Vec embeddings."""
+        logger.info(f"Loading GT2Vec embeddings from {file_path}")
+        self.embeddings['gt2vec'] = np.load(file_path, allow_pickle=True).item()
+        logger.info(f"Loaded {len(self.embeddings['gt2vec'])} GT2Vec embeddings")
+
+
 
 class SimilarityModel(nn.Module):
     """Neural network for computing GO term similarities."""
@@ -145,7 +185,7 @@ class EmbeddingEvaluator(Evaluator):
     def evaluate(self, model, eva_samples: pd.DataFrame) -> Tuple[float, float, float, float]:
         """Evaluate model performance using MRR and Hits@k metrics."""
         model.verbose = False
-        batch_size = 128  # Adjust based on your memory constraints
+        batch_size = 32  # Adjust based on your memory constraints
 
         # Pre-compute all_classes and embeddings once
         all_classes = np.array(list(self.dataset.embeddings[self.embedding_type].keys()))
@@ -232,6 +272,125 @@ class EmbeddingEvaluator(Evaluator):
 
         return tuple(metrics)
 
+    def run_torch_mlp(self):
+        """Run MLP training using PyTorch"""
+        # Convert data to torch tensors
+        X_train, X_val, y_train, y_val = train_test_split(
+            self.train_X, self.train_y,
+            test_size=0.1,
+            random_state=42
+        )
+
+        X_train = torch.FloatTensor(X_train).to(self.config.device)
+        y_train = torch.FloatTensor(y_train).to(self.config.device)
+        X_val = torch.FloatTensor(X_val).to(self.config.device)
+        y_val = torch.FloatTensor(y_val).to(self.config.device)
+
+        # Create data loaders
+        train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True
+        )
+
+        val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=self.config.batch_size
+        )
+
+        # Initialize model
+        input_dim = X_train.shape[1]
+        model = TorchMLP(input_dim).to(self.config.device)
+
+        # Loss and optimizer
+        criterion = nn.BCELoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=self.config.learning_rate)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 'min', patience=5, factor=0.5
+        )
+
+        # Training loop
+        best_val_loss = float('inf')
+        patience = 10
+        patience_counter = 0
+
+        for epoch in range(self.config.num_epochs):
+            # Training
+            model.train()
+            train_loss = 0
+            for batch_X, batch_y in tqdm(train_loader, desc=f"Epoch {epoch+1}/{self.config.num_epochs}"):
+                optimizer.zero_grad()
+                outputs = model(batch_X).squeeze()
+                loss = criterion(outputs, batch_y)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+
+            # Validation
+            model.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for batch_X, batch_y in val_loader:
+                    outputs = model(batch_X).squeeze()
+                    val_loss += criterion(outputs, batch_y).item()
+
+            train_loss /= len(train_loader)
+            val_loss /= len(val_loader)
+
+            # Learning rate scheduling
+            scheduler.step(val_loss)
+
+            # Early stopping
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state = model.state_dict()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
+
+            # Log metrics
+            wandb.log({
+                f"{self.embedding_type}/torch_mlp/train_loss": train_loss,
+                f"{self.embedding_type}/torch_mlp/val_loss": val_loss,
+                f"{self.embedding_type}/torch_mlp/learning_rate": optimizer.param_groups[0]['lr'],
+                f"{self.embedding_type}/torch_mlp/epoch": epoch
+            })
+
+            logger.info(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+
+        # Load best model
+        model.load_state_dict(best_state)
+
+        # Create a sklearn-compatible wrapper for evaluation
+        class ModelWrapper:
+            def __init__(self, torch_model, device):
+                self.model = torch_model
+                self.device = device
+
+            def predict_proba(self, X):
+                self.model.eval()
+                X_tensor = torch.FloatTensor(X).to(self.device)
+                with torch.no_grad():
+                    probs = self.model(X_tensor).cpu().numpy()
+                return np.column_stack([1 - probs, probs])
+
+        wrapper = ModelWrapper(model, self.config.device)
+        MRR, hits1, hits5, hits10 = self.evaluate(model=wrapper, eva_samples=self.test_samples)
+        print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' %
+            (MRR, hits1, hits5, hits10))
+
+    def run_mlp(self):
+        if self.config.enhanced:
+            self.run_torch_mlp()
+        else:
+            super().run_mlp()
+
 def main():
     """Main execution function."""
     # Load configuration
@@ -249,13 +408,15 @@ def main():
     evaluator = EmbeddingEvaluator(config, valid_data, test_data)
 
     # Load embeddings
-    evaluator.dataset.load_anc2vec(base_path / "anc2vec" / "ontology.embeddings.npy")
-    evaluator.dataset.load_owl2vec(base_path / "owl2vec" / "ontology.embeddings.npy")
+    # evaluates whichever ones are loaded
+    # evaluator.dataset.load_anc2vec(base_path / "anc2vec" / "ontology.embeddings.npy")
+    # evaluator.dataset.load_owl2vec(base_path / "owl2vec" / "ontology.embeddings.npy")
+    # if (base_path / "gt2vec" / "ontology.embeddings.npy").exists():
+    #     evaluator.dataset.load_gt2vec(base_path / "gt2vec" / "ontology.embeddings.npy")
     evaluator.dataset.load_biobert(base_path / "biobert" / "ontology.embeddings.npy")
 
     # Validate data structure
     logger.info(f"Train data shape: {train_data.shape}")
-    logger.info(f"Train data columns: {train_data.columns.tolist()}")
 
     # Load inferred ancestors
     with open(base_path / "split" / "inferred_ancestors.txt") as f:
@@ -274,25 +435,27 @@ def main():
 
         # # Run different models
         # logger.info("\nRandom Forest:")
+        # takes too long to eval
         # evaluator.run_random_forest()
 
         logger.info("\nMLP:")
-        # evaluator.run_mlp()
+        evaluator.run_mlp()
+        # logger.info("\nLogistic Regression:")
+        # evaluator.run_logistic_regression()
 
-        logger.info("\nLogistic Regression:")
-        #evaluator.run_logistic_regression()
+        # logger.info("\nSVM:")
+        # takes too long to train
+        # evaluator.run_svm()
 
-        logger.info("\nSVM:")
-        evaluator.run_svm()
+        # logger.info("\nLinear SVC:")
+        # evaluator.run_linear_svc()
 
-        logger.info("\nLinear SVC:")
-        evaluator.run_linear_svc()
+        # logger.info("\nDecision Tree:")
+        # evaluator.run_decision_tree()
 
-        logger.info("\nDecision Tree:")
-        evaluator.run_decision_tree()
-
-        logger.info("\nSGD Logistic:")
-        evaluator.run_sgd_log()
+        # logger.info("\nSGD Logistic:")
+        # evaluator.run_sgd_log()
+        gc.collect()
 
     # Close wandb run
     wandb.finish()

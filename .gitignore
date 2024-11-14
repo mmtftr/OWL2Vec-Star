@@ -1,9 +1,10 @@
 *.npy
 wandb
 
+
 *.embeddings
 *.embeddings.txt
-
+gt2vec/namedef*
 
 case_studies/data/go.owl
 cache
