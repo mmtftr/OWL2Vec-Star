@@ -23,14 +23,45 @@ import torch.nn.functional as F
 from dataclasses import dataclass, field
 import yaml
 import sys
+
 sys.path.append('..')
+
 from owl2vec_star.lib.Evaluator import Evaluator
 from rich.traceback import install
-install(show_locals=True)
 import warnings
 from tqdm import TqdmExperimentalWarning
 
+install(show_locals=True)
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
+
+from rich.logging import RichHandler
+from rich.console import Console
+
+console = Console(force_terminal=True)
+if console.is_jupyter is True:
+    console.is_jupyter = False
+ch = RichHandler(show_path=False, console=console, show_time=False)
+
+FORMAT = "%(message)s"
+logging.basicConfig(
+    level="INFO", format=FORMAT, datefmt="[%X]", handlers=[ch]
+)
+
+logger = logging.getLogger(__name__)
+
+# Create a sklearn-compatible wrapper for evaluation
+class ModelWrapper:
+    def __init__(self, torch_model, device):
+        self.model = torch_model.to("cpu")
+        self.device = device
+
+    def predict_proba(self, X):
+        self.model.eval()
+        X_tensor = torch.FloatTensor(X)
+
+        with torch.no_grad():
+            probs = (1-self.model(X_tensor)).unsqueeze(-1).numpy()
+        return probs
 
 class TorchMLP(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: List[int] = [200, 100], dropout: float = 0.2):
@@ -58,21 +89,6 @@ class TorchMLP(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-from rich.logging import RichHandler
-from rich.console import Console
-
-console = Console(force_terminal=True)
-if console.is_jupyter is True:
-    console.is_jupyter = False
-ch = RichHandler(show_path=False, console=console, show_time=False)
-
-FORMAT = "%(message)s"
-logging.basicConfig(
-    level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[ch]
-)
-
-logger = logging.getLogger(__name__)
-
 @dataclass
 class EvalConfig:
     """Configuration for the evaluation pipeline."""
@@ -81,6 +97,7 @@ class EvalConfig:
     batch_size: int = 128
     learning_rate: float = 0.001
     num_epochs: int = 100
+    use_existing_model: bool = True
     test_size: float = 0.2
     random_seed: int = 42
     embedding_types: List[str] = field(default_factory=lambda: ["owl2vec"])
@@ -203,6 +220,7 @@ class EmbeddingEvaluator(Evaluator):
             batch_gts = [g.split('/')[-1] for g in batch_samples[1]]
 
             # Get embeddings for batch subjects
+            # B x D
             batch_sub_v = np.array([
                 self.dataset.embeddings[self.embedding_type].get(sub_id, np.zeros(embedding_dim))
                 for sub_id in batch_subs
@@ -211,9 +229,10 @@ class EmbeddingEvaluator(Evaluator):
             # Prepare predictions for all pairs in batch
             if self.config.input_type == 'concatenate':
                 # Shape: (batch_size, n_classes, embedding_dim * 2)
+                # B x C x 2D
                 X = np.concatenate([
-                    np.repeat(batch_sub_v[:, None, :], len(all_classes), axis=1),
-                    np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0)
+                    np.repeat(batch_sub_v[:, None, :], len(all_classes), axis=1), # B x C x D
+                    np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0) # B x C x D
                 ], axis=2)
             else:
                 # Shape: (batch_size, n_classes, embedding_dim)
@@ -221,8 +240,10 @@ class EmbeddingEvaluator(Evaluator):
                     np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0)
 
             # Reshape for prediction
+            # B x C x D -> (B*C) x D
             X_flat = X.reshape(-1, X.shape[-1])
-            P = model.predict_proba(X_flat)[:, 1].reshape(len(batch_sub_v), -1)
+            # (B*C) x 1 -> B x C
+            P = (1-model.predict_proba(X_flat)[:, 0]).reshape(len(batch_sub_v), -1)
 
             # Calculate rankings and metrics for batch
             for idx, (sub_id, gt_id, probs) in enumerate(zip(batch_subs, batch_gts, P)):
@@ -250,10 +271,10 @@ class EmbeddingEvaluator(Evaluator):
                 n = batch_start + batch_size
                 logger.info(
                     f'Evaluated {n} samples - '
-                    f'MRR: {metrics[0]/n:.3f}, '
-                    f'Hits@1: {metrics[1]/n:.3f}, '
-                    f'Hits@5: {metrics[2]/n:.3f}, '
-                    f'Hits@10: {metrics[3]/n:.3f}'
+                    f'MRR: {metrics[0]/n}, '
+                    f'Hits@1: {metrics[1]/n}, '
+                    f'Hits@5: {metrics[2]/n}, '
+                    f'Hits@10: {metrics[3]/n}'
                 )
 
         # Compute final metrics
@@ -304,6 +325,23 @@ class EmbeddingEvaluator(Evaluator):
         input_dim = X_train.shape[1]
         model = TorchMLP(input_dim).to(self.config.device)
 
+        # Set up model save path
+        model_dir = Path(f"{self.config.base_ontology}/models")
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_path = model_dir / f"torch_mlp_{self.embedding_type}.pt"
+
+        # Load saved model if it exists
+        if model_path.exists():
+            logger.info(f"Loading saved model from {model_path}")
+            model.load_state_dict(torch.load(model_path))
+
+        if model_path.exists() and self.config.use_existing_model:
+            wrapper = ModelWrapper(model, self.config.device)
+            MRR, hits1, hits5, hits10 = self.evaluate(model=wrapper, eva_samples=self.test_samples)
+            print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' %
+                (MRR, hits1, hits5, hits10))
+            return
+
         # Loss and optimizer
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=self.config.learning_rate)
@@ -347,6 +385,9 @@ class EmbeddingEvaluator(Evaluator):
                 best_val_loss = val_loss
                 best_state = model.state_dict()
                 patience_counter = 0
+                # Save best model
+                torch.save(best_state, model_path)
+                logger.info(f"Saved best model to {model_path}")
             else:
                 patience_counter += 1
 
@@ -355,11 +396,12 @@ class EmbeddingEvaluator(Evaluator):
                 break
 
             # Log metrics
+            prefix = f"{self.config.base_ontology}/{self.embedding_type}/torch_mlp"
             wandb.log({
-                f"{self.embedding_type}/torch_mlp/train_loss": train_loss,
-                f"{self.embedding_type}/torch_mlp/val_loss": val_loss,
-                f"{self.embedding_type}/torch_mlp/learning_rate": optimizer.param_groups[0]['lr'],
-                f"{self.embedding_type}/torch_mlp/epoch": epoch
+                f"{prefix}/train_loss": train_loss,
+                f"{prefix}/val_loss": val_loss,
+                f"{prefix}/learning_rate": optimizer.param_groups[0]['lr'],
+                f"{prefix}/epoch": epoch
             })
 
             logger.info(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
@@ -367,18 +409,7 @@ class EmbeddingEvaluator(Evaluator):
         # Load best model
         model.load_state_dict(best_state)
 
-        # Create a sklearn-compatible wrapper for evaluation
-        class ModelWrapper:
-            def __init__(self, torch_model, device):
-                self.model = torch_model
-                self.device = device
 
-            def predict_proba(self, X):
-                self.model.eval()
-                X_tensor = torch.FloatTensor(X).to(self.device)
-                with torch.no_grad():
-                    probs = self.model(X_tensor).cpu().numpy()
-                return np.column_stack([1 - probs, probs])
 
         wrapper = ModelWrapper(model, self.config.device)
         MRR, hits1, hits5, hits10 = self.evaluate(model=wrapper, eva_samples=self.test_samples)

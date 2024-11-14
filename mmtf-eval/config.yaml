@@ -1,18 +1,24 @@
 # Project settings
 project_name: "go-embedding-evaluation"
+# base ontology to use - go-basic, go-full, owl2vec-go (original owl2vec)
 base_ontology: "go-basic"
+# embedding types to evaluate
 embedding_types:
+  - biobert
   - owl2vec
+  - anc2vec
 models:
-  - mlp
-# - torch-mlp
-# - rf
+  - torch-mlp
+  #- rf
 
-input_type: "concatenate"  # or "minus"
+# input type for model - concatenate or minus
+input_type: "concatenate"
+# uses pretrained models if available without training (always starts with pretrained if exists)
+use_existing_model: true
 random_seed: 42
 
-
 # Training parameters
+# used for training new models (eval batch_size fixed to 32)
 batch_size: 128
 learning_rate: 0.001
 num_epochs: 100
