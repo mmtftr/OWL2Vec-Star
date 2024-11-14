@@ -4,7 +4,7 @@ wandb
 
 *.embeddings
 *.embeddings.txt
-gt2vec/namedef*
+namedef*
 
 case_studies/data/go.owl
 cache

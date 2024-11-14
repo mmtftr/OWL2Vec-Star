@@ -308,7 +308,7 @@ def __perform_ontology_embedding(config):
             f.close()
 
 
-    return
+    # return
     # learn the language model (train a new model or fine tune the pre-trained model)
     start_time = time.time()
     if 'pre_train_model' not in config['MODEL'] or not os.path.exists(config['MODEL']['pre_train_model']):
