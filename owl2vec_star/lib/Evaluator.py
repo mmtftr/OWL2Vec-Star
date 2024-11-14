@@ -99,7 +99,7 @@ class Evaluator:
         print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' % (MRR, hits1, hits5, hits10))
 
     def run_decision_tree(self):
-        dt = DecisionTreeClassifier(random_state=0, verbose=1)
+        dt = DecisionTreeClassifier(random_state=0)
         dt.fit(self.train_X, self.train_y)
         m_best = dt
         MRR, hits1, hits5, hits10 = self.evaluate(model=m_best, eva_samples=self.test_samples)
