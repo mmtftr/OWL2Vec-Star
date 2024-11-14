@@ -59,10 +59,16 @@ class TorchMLP(nn.Module):
         return self.model(x)
 
 from rich.logging import RichHandler
+from rich.console import Console
+
+console = Console(force_terminal=True)
+if console.is_jupyter is True:
+    console.is_jupyter = False
+ch = RichHandler(show_path=False, console=console, show_time=False)
 
 FORMAT = "%(message)s"
 logging.basicConfig(
-    level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[RichHandler()]
+    level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[ch]
 )
 
 logger = logging.getLogger(__name__)
