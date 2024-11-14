@@ -5,6 +5,8 @@ wandb
 *.embeddings
 *.embeddings.txt
 namedef*
+go-basic.zip
+go-full.zip
 
 case_studies/data/go.owl
 cache
