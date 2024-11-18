@@ -4,10 +4,10 @@ project_name: "go-embedding-evaluation"
 base_ontology: "go-basic"
 # embedding types to evaluate
 embedding_types:
-  - owl2vec
-  - anc2vec
-  - biobert
-  - sbert
+  # - owl2vec
+  # - anc2vec
+  # - biobert
+  # - sbert
   - gt2vec
 models:
   - mlp

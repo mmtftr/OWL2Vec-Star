@@ -249,6 +249,10 @@ class EmbeddingEvaluator(Evaluator):
             sub_id = all_subs[idx]
             gt_id = all_gts[idx]
 
+            if sub_id not in all_classes or gt_id not in all_classes:
+                logger.warning(f"Sub or GT ID not in embedded classes: {sub_id} or {gt_id}")
+                continue
+
             # Get embedding for subject
             sub_v = emb.get(sub_id, np.zeros(embedding_dim))
 
