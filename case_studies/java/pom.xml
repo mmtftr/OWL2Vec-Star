@@ -72,7 +72,8 @@
                 <version>3.0.0</version>
                 <configuration>
                     <executable>java</executable>
-                    <mainClass>ontology_embed.SubClass_NormalSplit</mainClass>
+                    <!-- <mainClass>ontology_embed.SubClass_NormalSplit</mainClass> -->
+                    <mainClass>ontology_embed.Ontology_Axioms_Annotations</mainClass>
                 </configuration>
             </plugin>
         </plugins>

@@ -1,7 +1,9 @@
+task-tracker.md
 *.npy
 wandb
 
 
+*.pt
 *.embeddings
 *.embeddings.txt
 namedef*

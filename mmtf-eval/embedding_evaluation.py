@@ -7,6 +7,7 @@ for experiment tracking.
 """
 
 from re import I, sub
+import numba
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -23,13 +24,15 @@ import torch.nn.functional as F
 from dataclasses import dataclass, field
 import yaml
 import sys
+from numba import jit
+
 
 sys.path.append('..')
 
 from owl2vec_star.lib.Evaluator import Evaluator
 from rich.traceback import install
 import warnings
-from tqdm import TqdmExperimentalWarning
+from tqdm import TqdmExperimentalWarning, trange
 
 install(show_locals=True)
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
@@ -51,20 +54,27 @@ logger = logging.getLogger(__name__)
 
 # Create a sklearn-compatible wrapper for evaluation
 class ModelWrapper:
+    model: torch.jit.ScriptModule
+    device: str
+
     def __init__(self, torch_model, device):
-        self.model = torch_model.to("cpu")
+        self.model = torch.jit.script(torch_model).to("cpu")
         self.device = device
+        self.model.eval()
 
     def predict_proba(self, X):
-        self.model.eval()
         X_tensor = torch.FloatTensor(X)
 
         with torch.no_grad():
-            probs = (1-self.model(X_tensor)).unsqueeze(-1).numpy()
+            probs = self.transform_output(self.model(X_tensor)).numpy()
         return probs
 
+    @torch.jit.script
+    def transform_output(X):
+        return torch.cat((X, X), dim=-1)
+
 class TorchMLP(nn.Module):
-    def __init__(self, input_dim: int, hidden_dims: List[int] = [200, 100], dropout: float = 0.2):
+    def __init__(self, input_dim: int, hidden_dims: List[int] = [200], dropout: float = 0.2):
         super().__init__()
 
         layers = []
@@ -94,7 +104,7 @@ class EvalConfig:
     """Configuration for the evaluation pipeline."""
     project_name: str = "go-embedding-evaluation"
     base_ontology: Literal["go-basic", "go-full"] = "go-full"
-    batch_size: int = 128
+    batch_size: int = 200
     learning_rate: float = 0.001
     num_epochs: int = 100
     use_existing_model: bool = True
@@ -141,21 +151,6 @@ class EmbeddingDataset:
 
 
 
-class SimilarityModel(nn.Module):
-    """Neural network for computing GO term similarities."""
-
-    def __init__(self, embedding_dim: int):
-        super().__init__()
-        self.projection = nn.Sequential(
-            nn.Linear(embedding_dim * 2, embedding_dim),
-            nn.ReLU(),
-            nn.Linear(embedding_dim, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
-        combined = torch.cat([x1, x2], dim=1)
-        return self.projection(combined)
 
 class EmbeddingEvaluator(Evaluator):
     """Evaluator for embedding-based GO term classification."""
@@ -197,10 +192,38 @@ class EmbeddingEvaluator(Evaluator):
         self.train_X = train_X
         self.train_y = train_y
 
+
+        return -1
+
+    # metric calculation from original code
+    # used to check if results are consistent
+    def other_calc(self, P, gt, classes, inferred_ancestors, sub):
+        sorted_indexes = np.argsort(P, kind='stable')[::-1]
+        sorted_classes = list()
+        for j in sorted_indexes:
+            if classes[j] not in inferred_ancestors[sub]:
+                sorted_classes.append(classes[j])
+        rank = sorted_classes.index(gt) + 1
+        MRR_sum = 1.0 / rank
+        hits1_sum = 1 if gt in sorted_classes[:1] else 0
+        hits5_sum = 1 if gt in sorted_classes[:5] else 0
+        hits10_sum = 1 if gt in sorted_classes[:10] else 0
+        return MRR_sum, hits1_sum, hits5_sum, hits10_sum
+
     def evaluate(self, model, eva_samples: pd.DataFrame) -> Tuple[float, float, float, float]:
         """Evaluate model performance using MRR and Hits@k metrics."""
-        model.verbose = False
-        batch_size = 32
+        try:
+            model.verbose = False
+        except:
+            pass
+
+        @jit(nopython=True)
+        def find_first(item, vec):
+            """return the index of the first occurence of item in vec"""
+            for i in range(len(vec)):
+                if item == vec[i]:
+                    return i
+            return -1
 
         # Pre-compute all_classes and embeddings once
         all_classes = np.array(list(self.dataset.embeddings[self.embedding_type].keys()))
@@ -210,71 +233,72 @@ class EmbeddingEvaluator(Evaluator):
         metrics = np.zeros(4)  # [MRR, hits@1, hits@5, hits@10]
         n_samples = len(eva_samples)
 
-        # Process in batches
-        for batch_start in tqdm(range(0, n_samples, batch_size), desc="Evaluating"):
-            batch_end = min(batch_start + batch_size, n_samples)
-            batch_samples = eva_samples.iloc[batch_start:batch_end]
+        # Extract GO IDs from URIs
+        all_subs = [s.split('/')[-1] for s in eva_samples[0]]
+        all_gts = [g.split('/')[-1] for g in eva_samples[1]]
 
-            # Prepare batch inputs
-            batch_subs = [s.split('/')[-1] for s in batch_samples[0]]
-            batch_gts = [g.split('/')[-1] for g in batch_samples[1]]
+        C = len(all_classes)
+        emb = self.dataset.embeddings[self.embedding_type]
+        if self.config.input_type == 'concatenate':
+            X = np.zeros((C, embedding_dim * 2))
+            X[:, embedding_dim:] = all_class_v
+        else:
+            X = np.zeros((C, embedding_dim))
 
-            # Get embeddings for batch subjects
-            # B x D
-            batch_sub_v = np.array([
-                self.dataset.embeddings[self.embedding_type].get(sub_id, np.zeros(embedding_dim))
-                for sub_id in batch_subs
-            ])
+        for idx in trange(len(eva_samples), desc="Evaluating"):
+            sub_id = all_subs[idx]
+            gt_id = all_gts[idx]
 
-            # Prepare predictions for all pairs in batch
+            # Get embedding for subject
+            sub_v = emb.get(sub_id, np.zeros(embedding_dim))
+
+            # Prepare prediction input
             if self.config.input_type == 'concatenate':
-                # Shape: (batch_size, n_classes, embedding_dim * 2)
-                # B x C x 2D
-                X = np.concatenate([
-                    np.repeat(batch_sub_v[:, None, :], len(all_classes), axis=1), # B x C x D
-                    np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0) # B x C x D
-                ], axis=2)
+                X[:, :embedding_dim] = sub_v[None, :]
             else:
-                # Shape: (batch_size, n_classes, embedding_dim)
-                X = np.repeat(batch_sub_v[:, None, :], len(all_classes), axis=1) - \
-                    np.repeat(all_class_v[None, :, :], len(batch_sub_v), axis=0)
+                X = np.repeat(sub_v[None, :], C, axis=0) - all_class_v
 
-            # Reshape for prediction
-            # B x C x D -> (B*C) x D
-            X_flat = X.reshape(-1, X.shape[-1])
-            # (B*C) x 1 -> B x C
-            P = (1-model.predict_proba(X_flat)[:, 0]).reshape(len(batch_sub_v), -1)
+            # Get predictions
+            P = model.predict_proba(X)[:, 1]
 
-            # Calculate rankings and metrics for batch
-            for idx, (sub_id, gt_id, probs) in enumerate(zip(batch_subs, batch_gts, P)):
-                # Filter out inferred ancestors
+            # Filter out inferred ancestors
+
+            if sub_id in self.inferred_ancestors:
+                mask = ~np.isin(all_classes, self.inferred_ancestors[sub_id])
+                # assert gt_id not in self.inferred_ancestors[sub_id], "Superclass is an inferred ancestor"
+            else:
                 mask = np.ones(len(all_classes), dtype=bool)
-                if sub_id in self.inferred_ancestors:
-                    mask[np.isin(all_classes, self.inferred_ancestors[sub_id])] = False
+            # assert gt_id in all_classes, "Ground truth is not in all classes"
 
-                # Get sorted indices of valid predictions
-                valid_probs = probs[mask]
-                valid_classes = all_classes[mask]
-                sorted_indices = np.argsort(valid_probs)[::-1]
+            # Get sorted indices of valid predictions
+            valid_probs = P[mask]
+            valid_classes = all_classes[mask]
+            sorted_indices = np.argsort(valid_probs, axis=0)[::-1]
 
-                # Find rank of ground truth
-                gt_rank = np.where(valid_classes[sorted_indices] == gt_id)[0][0] + 1
 
-                # Update metrics
-                metrics[0] += 1.0 / gt_rank  # MRR
-                metrics[1] += gt_id == valid_classes[sorted_indices[0]]  # hits@1
-                metrics[2] += gt_id in valid_classes[sorted_indices[:5]]  # hits@5
-                metrics[3] += gt_id in valid_classes[sorted_indices[:10]]  # hits@10
+            # Calculate metrics
+            gt_idx = find_first(gt_id, valid_classes)
+            sorted_idx = find_first(gt_id, valid_classes[sorted_indices])
+
+            assert gt_idx != -1, "Ground truth is not in valid classes"
+            assert sorted_idx != -1, "Ground truth is not in sorted indices"
+            # breakpoint()
+            new_metrics = np.zeros(4)
+            new_metrics[0] += 1. / (sorted_idx + 1)
+            new_metrics[1] += 1. if sorted_idx < 1 else 0
+            new_metrics[2] += 1. if sorted_idx < 5 else 0
+            new_metrics[3] += 1. if sorted_idx < 10 else 0
+
+            metrics += new_metrics
 
             # Log progress periodically
-            if (batch_start + batch_size) % 1000 == 0:
-                n = batch_start + batch_size
+            if (idx + 1) % 1000 == 0:
                 logger.info(
-                    f'Evaluated {n} samples - '
-                    f'MRR: {metrics[0]/n}, '
-                    f'Hits@1: {metrics[1]/n}, '
-                    f'Hits@5: {metrics[2]/n}, '
-                    f'Hits@10: {metrics[3]/n}'
+                    f'Evaluated {idx + 1} samples - '
+                    f'MRR: {metrics[0]/(idx+1)}, '
+                    f'Hits@1: {metrics[1]/(idx+1)}, '
+                    f'Hits@5: {metrics[2]/(idx+1)}, '
+                    f'Hits@10: {metrics[3]/(idx+1)}'
                 )
 
         # Compute final metrics
@@ -344,7 +368,7 @@ class EmbeddingEvaluator(Evaluator):
 
         # Loss and optimizer
         criterion = nn.BCELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.config.learning_rate)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=self.config.learning_rate)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, 'min', patience=5, factor=0.5
         )
@@ -444,7 +468,7 @@ def main():
     # Load inferred ancestors
     with open(base_path / "split" / "inferred_ancestors.txt") as f:
         evaluator.inferred_ancestors = {
-            line.strip().split(',')[0]: line.strip().split(',')
+            line.strip().split(',')[0].split('/')[-1]: [s.split('/')[-1] for s in line.strip().split(',')]
             for line in f.readlines()
         }
 

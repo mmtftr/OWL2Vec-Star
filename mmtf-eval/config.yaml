@@ -4,21 +4,23 @@ project_name: "go-embedding-evaluation"
 base_ontology: "go-basic"
 # embedding types to evaluate
 embedding_types:
-  - biobert
   - owl2vec
   - anc2vec
+  - biobert
+  - sbert
+  - gt2vec
 models:
-  - torch-mlp
-  #- rf
+  - mlp
+  # - torch-mlp
 
 # input type for model - concatenate or minus
 input_type: "concatenate"
-# uses pretrained models if available without training (always starts with pretrained if exists)
+# uses pretrained models if available without training (always starts training with pretrained if exists)
 use_existing_model: true
 random_seed: 42
 
 # Training parameters
 # used for training new models (eval batch_size fixed to 32)
-batch_size: 128
+batch_size: 200
 learning_rate: 0.001
 num_epochs: 100

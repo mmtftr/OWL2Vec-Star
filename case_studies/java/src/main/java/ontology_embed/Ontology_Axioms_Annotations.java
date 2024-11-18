@@ -26,7 +26,7 @@ import org.semanticweb.owlapi.reasoner.OWLReasonerConfiguration;
 
 public class Ontology_Axioms_Annotations {
     private static String prefreasoner = "none"; //hermit, elk, none
-    private static String onto_file_name = "foodon-merged.train.owl";
+    private static String onto_file_name = "go.owl";
     private static String axiom_file = "axioms.txt";
     private static boolean extract_annotation = true; // true or false
     private static String annotation_file = "annotations.txt";
