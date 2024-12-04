@@ -105,6 +105,7 @@ class EvalConfig:
     project_name: str = "go-embedding-evaluation"
     base_ontology: Literal["go-basic", "go-full"] = "go-full"
     batch_size: int = 200
+    num_runs: int = 5
     learning_rate: float = 0.001
     num_epochs: int = 100
     use_existing_model: bool = True
@@ -210,7 +211,7 @@ class EmbeddingEvaluator(Evaluator):
         hits10_sum = 1 if gt in sorted_classes[:10] else 0
         return MRR_sum, hits1_sum, hits5_sum, hits10_sum
 
-    def evaluate(self, model, eva_samples: pd.DataFrame) -> Tuple[float, float, float, float]:
+    def evaluate(self, model, eva_samples: pd.DataFrame, should_log: bool = True) -> Tuple[float, float, float, float]:
         """Evaluate model performance using MRR and Hits@k metrics."""
         try:
             model.verbose = False
@@ -476,44 +477,45 @@ def main():
             for line in f.readlines()
         }
 
-    # Run evaluation for each embedding type
-    for embedding_type in evaluator.dataset.embeddings.keys():
-        evaluator.embedding_type = embedding_type
-        logger.info(f"\nEvaluating {embedding_type} embeddings")
+    for run in range(config.num_runs):
+        # Run evaluation for each embedding type
+        for embedding_type in evaluator.dataset.embeddings.keys():
+            evaluator.embedding_type = embedding_type
+            logger.info(f"\nEvaluating {embedding_type} embeddings")
 
-        # Prepare data
-        evaluator.prepare_data(train_data)
+            # Prepare data
+            evaluator.prepare_data(train_data)
 
-        # Run different models
-        if "rf" in config.models:
-            logger.info("\nRandom Forest:")
-            evaluator.run_random_forest()
+            # Run different models
+            if "rf" in config.models:
+                logger.info("\nRandom Forest:")
+                evaluator.run_random_forest()
 
-        if "mlp" in config.models:
-            logger.info("\nMLP:")
-            evaluator.run_mlp()
+            if "mlp" in config.models:
+                logger.info("\nMLP:")
+                evaluator.run_mlp()
 
-        if "torch-mlp" in config.models:
-            logger.info("\nTorch MLP:")
-            evaluator.run_torch_mlp()
+            if "torch-mlp" in config.models:
+                logger.info("\nTorch MLP:")
+                evaluator.run_torch_mlp()
 
-        if "lr" in config.models:
-            logger.info("\nLogistic Regression:")
-            evaluator.run_logistic_regression()
+            if "lr" in config.models:
+                logger.info("\nLogistic Regression:")
+                evaluator.run_logistic_regression()
 
-        if "svm" in config.models:
-            logger.info("\nSVM:")
-            evaluator.run_svm()
+            if "svm" in config.models:
+                logger.info("\nSVM:")
+                evaluator.run_svm()
 
-        if "dt" in config.models:
-            logger.info("\nDecision Tree:")
-            evaluator.run_decision_tree()
+            if "dt" in config.models:
+                logger.info("\nDecision Tree:")
+                evaluator.run_decision_tree()
 
-        if "sgd" in config.models:
-            logger.info("\nSGD Logistic:")
-            evaluator.run_sgd_log()
+            if "sgd" in config.models:
+                logger.info("\nSGD Logistic:")
+                evaluator.run_sgd_log()
 
-        gc.collect()
+            gc.collect()
 
     # Close wandb run
     wandb.finish()

@@ -6,6 +6,7 @@ import multiprocessing
 import gensim
 import sys
 from nltk import word_tokenize
+sys.path.append('../..')
 
 from owl2vec_star.lib.Evaluator import Evaluator
 from owl2vec_star.lib.RDF2Vec_Embed import get_rdf2vec_walks
@@ -22,11 +23,11 @@ parser.add_argument("--inferred_ancestor_file", type=str, default="inferred_ance
 # hyper parameters
 parser.add_argument("--embedsize", type=int, default=100, help="Embedding size of word2vec")
 parser.add_argument("--URI_Doc", type=str, default="yes")
-parser.add_argument("--Lit_Doc", type=str, default="no")
+parser.add_argument("--Lit_Doc", type=str, default="yes")
 parser.add_argument("--Mix_Doc", type=str, default="no")
 parser.add_argument("--Mix_Type", type=str, default="random", help="random, all")
-parser.add_argument("--Embed_Out_URI", type=str, default="yes")
-parser.add_argument("--Embed_Out_Words", type=str, default="no")
+parser.add_argument("--Embed_Out_URI", type=str, default="no")
+parser.add_argument("--Embed_Out_Words", type=str, default="yes")
 parser.add_argument("--input_type", type=str, default="concatenate", help='concatenate, minus')
 
 parser.add_argument("--walk_depth", type=int, default=3)
@@ -118,111 +119,113 @@ for line in open(FLAGS.annotation_file).readlines():
     elif tmp[0] in classes:
         annotations.append(tmp)
 
-walk_sentences, axiom_sentences = list(), list()
-if FLAGS.URI_Doc.lower() == 'yes':
-    walks_ = get_rdf2vec_walks(onto_file=FLAGS.onto_file, walker_type=FLAGS.walker,
-                               walk_depth=FLAGS.walk_depth, classes=classes)
-    print('Extracted {} walks for {} classes!'.format(len(walks_), len(classes)))
-    walk_sentences += [list(map(str, x)) for x in walks_]
-    for line in open(FLAGS.axiom_file).readlines():
-        axiom_sentence = [item for item in line.strip().split()]
-        axiom_sentences.append(axiom_sentence)
-    print('Extracted %d axiom sentences' % len(axiom_sentences))
-URI_Doc = walk_sentences + axiom_sentences
+# walk_sentences, axiom_sentences = list(), list()
+# if FLAGS.URI_Doc.lower() == 'yes':
+#     walks_ = get_rdf2vec_walks(onto_file=FLAGS.onto_file, walker_type=FLAGS.walker,
+#                                walk_depth=FLAGS.walk_depth, classes=classes)
+#     print('Extracted {} walks for {} classes!'.format(len(walks_), len(classes)))
+#     walk_sentences += [list(map(str, x)) for x in walks_]
+#     for line in open(FLAGS.axiom_file).readlines():
+#         axiom_sentence = [item for item in line.strip().split()]
+#         axiom_sentences.append(axiom_sentence)
+#     print('Extracted %d axiom sentences' % len(axiom_sentences))
+# URI_Doc = walk_sentences + axiom_sentences
 
-Lit_Doc = list()
-if FLAGS.Lit_Doc.lower() == 'yes':
-    for annotation in annotations:
-        processed_words = pre_process_words(annotation[2:])
-        if len(processed_words) > 0:
-            Lit_Doc.append(uri_label[annotation[0]] + processed_words)
-    print('Extracted %d literal annotations' % len(Lit_Doc))
+# Lit_Doc = list()
+# if FLAGS.Lit_Doc.lower() == 'yes':
+#     for annotation in annotations:
+#         processed_words = pre_process_words(annotation[2:])
+#         if len(processed_words) > 0 and annotation[0] in uri_label:
+#             Lit_Doc.append(uri_label[annotation[0]] + processed_words)
+#     print('Extracted %d literal annotations' % len(Lit_Doc))
 
-    for sentence in walk_sentences:
-        lit_sentence = list()
-        for item in sentence:
-            if item in uri_label:
-                lit_sentence += uri_label[item]
-            elif item.startswith('http://www.w3.org'):
-                lit_sentence += [item.split('#')[1].lower()]
-            else:
-                lit_sentence += [item]
-        Lit_Doc.append(lit_sentence)
+#     for sentence in walk_sentences:
+#         lit_sentence = list()
+#         for item in sentence:
+#             if item in uri_label:
+#                 lit_sentence += uri_label[item]
+#             elif item.startswith('http://www.w3.org'):
+#                 lit_sentence += [item.split('#')[1].lower()]
+#             else:
+#                 lit_sentence += [item]
+#         Lit_Doc.append(lit_sentence)
 
-    for sentence in axiom_sentences:
-        lit_sentence = list()
-        for item in sentence:
-            lit_sentence += uri_label[item] if item in uri_label else [item.lower()]
-        Lit_Doc.append(lit_sentence)
+#     for sentence in axiom_sentences:
+#         lit_sentence = list()
+#         for item in sentence:
+#             lit_sentence += uri_label[item] if item in uri_label else [item.lower()]
+#         Lit_Doc.append(lit_sentence)
 
-Mix_Doc = list()
-if FLAGS.Mix_Doc.lower() == 'yes':
-    for sentence in walk_sentences:
-        if FLAGS.Mix_Type.lower() == 'all':
-            for index in range(len(sentence)):
-                mix_sentence = list()
-                for i, item in enumerate(sentence):
-                    if i == index:
-                        mix_sentence += [item]
-                    else:
-                        if item in uri_label:
-                            mix_sentence += uri_label[item]
-                        elif item.startswith('http://www.w3.org'):
-                            mix_sentence += [item.split('#')[1].lower()]
-                        else:
-                            mix_sentence += [item]
-                Mix_Doc.append(mix_sentence)
-        elif FLAGS.Mix_Type.lower() == 'random':
-            random_index = random.randint(0, len(sentence)-1)
-            mix_sentence = list()
-            for i, item in enumerate(sentence):
-                if i == random_index:
-                    mix_sentence += [item]
-                else:
-                    if item in uri_label:
-                        mix_sentence += uri_label[item]
-                    elif item.startswith('http://www.w3.org'):
-                        mix_sentence += [item.split('#')[1].lower()]
-                    else:
-                        mix_sentence += [item]
-            Mix_Doc.append(mix_sentence)
+# Mix_Doc = list()
+# if FLAGS.Mix_Doc.lower() == 'yes':
+#     for sentence in walk_sentences:
+#         if FLAGS.Mix_Type.lower() == 'all':
+#             for index in range(len(sentence)):
+#                 mix_sentence = list()
+#                 for i, item in enumerate(sentence):
+#                     if i == index:
+#                         mix_sentence += [item]
+#                     else:
+#                         if item in uri_label:
+#                             mix_sentence += uri_label[item]
+#                         elif item.startswith('http://www.w3.org'):
+#                             mix_sentence += [item.split('#')[1].lower()]
+#                         else:
+#                             mix_sentence += [item]
+#                 Mix_Doc.append(mix_sentence)
+#         elif FLAGS.Mix_Type.lower() == 'random':
+#             random_index = random.randint(0, len(sentence)-1)
+#             mix_sentence = list()
+#             for i, item in enumerate(sentence):
+#                 if i == random_index:
+#                     mix_sentence += [item]
+#                 else:
+#                     if item in uri_label:
+#                         mix_sentence += uri_label[item]
+#                     elif item.startswith('http://www.w3.org'):
+#                         mix_sentence += [item.split('#')[1].lower()]
+#                     else:
+#                         mix_sentence += [item]
+#             Mix_Doc.append(mix_sentence)
 
-    for sentence in axiom_sentences:
-        if FLAGS.Mix_Type.lower() == 'all':
-            for index in range(len(sentence)):
-                random_index = random.randint(0, len(sentence) - 1)
-                mix_sentence = list()
-                for i, item in enumerate(sentence):
-                    if i == random_index:
-                        mix_sentence += [item]
-                    else:
-                        mix_sentence += uri_label[item] if item in uri_label else [item.lower()]
-                Mix_Doc.append(mix_sentence)
-        elif FLAGS.Mix_Type.lower() == 'random':
-            random_index = random.randint(0, len(sentence)-1)
-            mix_sentence = list()
-            for i, item in enumerate(sentence):
-                if i == random_index:
-                    mix_sentence += [item]
-                else:
-                    mix_sentence += uri_label[item] if item in uri_label else [item.lower()]
-            Mix_Doc.append(mix_sentence)
+#     for sentence in axiom_sentences:
+#         if FLAGS.Mix_Type.lower() == 'all':
+#             for index in range(len(sentence)):
+#                 random_index = random.randint(0, len(sentence) - 1)
+#                 mix_sentence = list()
+#                 for i, item in enumerate(sentence):
+#                     if i == random_index:
+#                         mix_sentence += [item]
+#                     else:
+#                         mix_sentence += uri_label[item] if item in uri_label else [item.lower()]
+#                 Mix_Doc.append(mix_sentence)
+#         elif FLAGS.Mix_Type.lower() == 'random':
+#             random_index = random.randint(0, len(sentence)-1)
+#             mix_sentence = list()
+#             for i, item in enumerate(sentence):
+#                 if i == random_index:
+#                     mix_sentence += [item]
+#                 else:
+#                     mix_sentence += uri_label[item] if item in uri_label else [item.lower()]
+#             Mix_Doc.append(mix_sentence)
 
 
-print('URI_Doc: %d, Lit_Doc: %d, Mix_Doc: %d' % (len(URI_Doc), len(Lit_Doc), len(Mix_Doc)))
-all_doc = URI_Doc + Lit_Doc + Mix_Doc
-random.shuffle(all_doc)
+# print('URI_Doc: %d, Lit_Doc: %d, Mix_Doc: %d' % (len(URI_Doc), len(Lit_Doc), len(Mix_Doc)))
+# all_doc = URI_Doc + Lit_Doc + Mix_Doc
+# random.shuffle(all_doc)
 
-# learn the embeddings
-if FLAGS.pretrained.lower() == 'none' or FLAGS.pretrained == '':
-    model_ = gensim.models.Word2Vec(all_doc, vector_size=FLAGS.embedsize, window=5, workers=multiprocessing.cpu_count(),
-                                    sg=1, epochs=10, negative=25, min_count=1, seed=42)
-else:
-    model_ = gensim.models.Word2Vec.load(FLAGS.pretrained)
-    if len(all_doc) > 0:
-        model_.min_count = 1
-        model_.build_vocab(all_doc, update=True)
-        model_.train(all_doc, total_examples=model_.corpus_count, epochs=100)
+# # learn the embeddings
+# if FLAGS.pretrained.lower() == 'none' or FLAGS.pretrained == '':
+#     model_ = gensim.models.Word2Vec(all_doc, vector_size=FLAGS.embedsize, window=5, workers=multiprocessing.cpu_count(),
+#                                     sg=1, epochs=10, negative=25, min_count=1, seed=42)
+# else:
+#     model_ = gensim.models.Word2Vec.load(FLAGS.pretrained)
+#     if len(all_doc) > 0:
+#         model_.min_count = 1
+#         model_.build_vocab(all_doc, update=True)
+#         model_.train(all_doc, total_examples=model_.corpus_count, epochs=100)
+
+model_ = gensim.models.Word2Vec.load('owl2vec_plus.model')
 
 classes_e = embed(model=model_, instances=classes)
 new_embedsize = classes_e[0].shape[0]
@@ -261,6 +264,8 @@ class InclusionEvaluator(Evaluator):
 
     def evaluate(self, model, eva_samples):
         MRR_sum, hits1_sum, hits5_sum, hits10_sum = 0, 0, 0, 0
+        classes_arr = np.array(classes)
+        all_preds=np.array((len(eva_samples),256), dtype=np.int16)
         random.shuffle(eva_samples)
         for k, sample in enumerate(eva_samples):
             sub, gt = sample[0], sample[1]
@@ -272,6 +277,7 @@ class InclusionEvaluator(Evaluator):
                 X = np.array([sub_v] * candidate_num) - classes_e
             P = model.predict_proba(X)[:, 1]
             sorted_indexes = np.argsort(P)[::-1]
+            all_preds[k, :] = sorted_indexes
             sorted_classes = list()
             for j in sorted_indexes:
                 if classes[j] not in inferred_ancestors[sub]:
@@ -287,6 +293,9 @@ class InclusionEvaluator(Evaluator):
                       (num, MRR_sum / num, hits1_sum / num, hits5_sum / num, hits10_sum / num))
         eva_n = len(eva_samples)
         e_MRR, hits1, hits5, hits10 = MRR_sum / eva_n, hits1_sum / eva_n, hits5_sum / eva_n, hits10_sum / eva_n
+
+        #save all_preds
+        np.save(FLAGS.base_path / 'all_preds.npy', all_preds)
         return e_MRR, hits1, hits5, hits10
 
 

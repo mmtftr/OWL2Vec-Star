@@ -7,6 +7,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
+import wandb
 
 class Evaluator:
 
@@ -48,33 +49,40 @@ class Evaluator:
                (MRR, hits1, hits5, hits10))
     """
 
-    def run_mlp(self):
-        mlp = MLPClassifier(max_iter=1000, hidden_layer_sizes=200, verbose=1)
-        mlp.fit(self.train_X, self.train_y)
-        mlp_best = mlp
-        MRR, hits1, hits5, hits10 = self.evaluate(model=mlp_best, eva_samples=self.test_samples)
-        print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' % (MRR, hits1, hits5, hits10))
+    # def run_mlp(self):
+    #     mlp = MLPClassifier(max_iter=1000, hidden_layer_sizes=200, verbose=1)
+    #     mlp.fit(self.train_X, self.train_y)
+    #     mlp_best = mlp
+    #     MRR, hits1, hits5, hits10 = self.evaluate(model=mlp_best, eva_samples=self.test_samples)
+    #     print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' % (MRR, hits1, hits5, hits10))
 
     # the complete one
-    """
     def run_mlp(self):
         mlp_best = None
         mlp_best_mrr = 0.0
         mlp_best_hidden = 0
         for hidden_n in [50, 100, 150, 200, 250]:
-            mlp = MLPClassifier(max_iter=1000, hidden_layer_sizes=hidden_n)
+            mlp = MLPClassifier(max_iter=1000, hidden_layer_sizes=hidden_n, early_stopping=True, validation_fraction=0.1)
             mlp.fit(self.train_X, self.train_y)
-            mrr, _, _, _ = self.evaluate(model=mlp, eva_samples=self.valid_samples)
-            print('MLP, tree_n: %d, valid MRR: %.3f' % (hidden_n, mrr))
+            mrr, _, _, _ = self.evaluate(model=mlp, eva_samples=self.valid_samples, should_log=False)
+            print('MLP, hidden_n: %d, test MRR: %.3f' % (hidden_n, mrr))
+
+            model_name = mlp.__class__.__name__
+            prefix = f"{self.config.base_ontology}/{self.embedding_type}/{model_name}"
+            wandb.log({f"{prefix}/mlp_{hidden_n}_valid_mrr": mrr})
             if mrr > mlp_best_mrr:
                 mlp_best_mrr = mrr
                 mlp_best = mlp
                 mlp_best_hidden = hidden_n
-        print('\nSelected MLP, hidden_n: %d, validation MRR: %.3f' % (mlp_best_hidden, mlp_best_mrr))
-        MRR, hits1, hits5, hits10 = self.evaluate(model=mlp_best, eva_samples=self.test_samples)
+        print('\nSelected MLP, hidden_n: %d, test MRR: %.3f' % (mlp_best_hidden, mlp_best_mrr))
+        prefix = f"{self.config.base_ontology}/{self.embedding_type}/{model_name}"
+
+        wandb.log({f"{prefix}/mlp_best_hidden": mlp_best_hidden, f"{prefix}/mlp_best_test_mrr": mlp_best_mrr})
+
+        MRR, hits1, hits5, hits10 = self.evaluate(model=mlp_best, eva_samples=self.test_samples, should_log=True)
+
         print('Testing, MRR: %.3f, Hits@1: %.3f, Hits@5: %.3f, Hits@10: %.3f\n\n' %
               (MRR, hits1, hits5, hits10))
-    """
 
     def run_logistic_regression(self):
         lr = LogisticRegression(random_state=0, verbose=1, n_jobs=-1)
